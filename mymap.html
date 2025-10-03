@@ -1,0 +1,129 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Crime clustering with MapLibre</title>
+  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+  <style>
+    body, html, #map { height: 100%; margin: 0; }
+    .maplibregl-popup-content { font: 13px/1.4 system-ui, -apple-system, Segoe UI, Roboto; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+  <script>
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://demotiles.maplibre.org/style.json',  // open style
+      center: [153.0, -27.4705], // [lng, lat]
+      zoom: 11
+    });
+
+    map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+    map.on('load', () => {
+      map.addSource('crimes', {
+        type: 'json',
+        data: 'crime.geojson',    // your GeoJSON file (see Python export below)
+        cluster: true,
+        clusterRadius: 50,        // px; lower = split sooner
+        clusterMaxZoom: 14
+      });
+
+      // 1) Cluster circles
+      map.addLayer({
+        id: 'clusters',
+        type: 'circle',
+        source: 'crimes',
+        filter: ['has', 'point_count'],
+        paint: {
+          // bigger clusters → darker/larger circles
+          'circle-color': [
+            'step',
+            ['get', 'point_count'],
+            '#90caf9', 50,  '#42a5f5',
+            100, '#1e88e5',
+            250, '#1565c0'
+          ],
+          'circle-radius': [
+            'step',
+            ['get', 'point_count'],
+            16, 50, 22, 100, 28, 250, 34
+          ]
+        }
+      });
+
+      // 2) Cluster count labels
+      map.addLayer({
+        id: 'cluster-count',
+        type: 'symbol',
+        source: 'crimes',
+        filter: ['has', 'point_count'],
+        layout: {
+          'text-field': ['get', 'point_count_abbreviated'],
+          'text-font': ['Noto Sans Regular'],
+          'text-size': 12
+        },
+        paint: { 'text-color': '#fff' }
+      });
+
+      // 3) Unclustered points (color by Type)
+      // Update 'match' cases to include your categories (or generate them in code)
+      map.addLayer({
+        id: 'unclustered-points',
+        type: 'circle',
+        source: 'crimes',
+        filter: ['!', ['has', 'point_count']],
+        paint: {
+          'circle-color': [
+            'match',
+            ['get', 'Type'],
+            'Arson', '#e41a1c',
+            'Assault', '#377eb8',
+            'Drug Offences', '#4daf4a',
+            'Fraud', '#984ea3',
+            'Robbery', '#ff7f00',
+            'Unlawful Entry', '#a65628',
+            'Weapons Act Offences', '#f781bf',
+            /* other types... */ '#999999' // default
+          ],
+          'circle-radius': 6,
+          'circle-stroke-width': 1,
+          'circle-stroke-color': '#fff'
+        }
+      });
+
+      // Click a cluster → zoom to expand
+      map.on('click', 'clusters', (e) => {
+        const features = map.queryRenderedFeatures(e.point, { layers: ['clusters'] });
+        const clusterId = features[0].properties.cluster_id;
+        map.getSource('crimes').getClusterExpansionZoom(clusterId, (err, zoom) => {
+          if (err) return;
+          map.easeTo({ center: features[0].geometry.coordinates, zoom });
+        });
+      });
+
+      // Click an unclustered point → show popup with Type (and any other fields)
+      map.on('click', 'unclustered-points', (e) => {
+        const f = e.features[0];
+        const coords = f.geometry.coordinates.slice();
+        const props = f.properties || {};
+        const html = `
+          <strong>Type:</strong> ${props.Type || '—'}<br/>
+          ${props.Suburb ? `<strong>Suburb:</strong> ${props.Suburb}<br/>` : ''}
+          ${props.Date ? `<strong>Date:</strong> ${props.Date}<br/>` : ''}
+        `;
+        new maplibregl.Popup().setLngLat(coords).setHTML(html).addTo(map);
+      });
+
+      // Change cursor on hover
+      map.on('mouseenter', 'clusters', () => map.getCanvas().style.cursor = 'pointer');
+      map.on('mouseleave', 'clusters', () => map.getCanvas().style.cursor = '');
+      map.on('mouseenter', 'unclustered-points', () => map.getCanvas().style.cursor = 'pointer');
+      map.on('mouseleave', 'unclustered-points', () => map.getCanvas().style.cursor = '');
+    });
+  </script>
+</body>
+</html>
